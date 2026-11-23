@@ -1,0 +1,190 @@
+{
+  "name": "sidemu",
+  "displayName": "Sidemu",
+  "description": "Run and mirror Android emulators, iOS simulators, and mobile devices in the VSCodium / VS Code sidebar with a bundled MCP server and Nix flake support.",
+  "version": "0.1.3",
+  "publisher": "sidemu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fumoctl/SideEmu"
+  },
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "android",
+    "ios",
+    "emulator",
+    "simulator",
+    "mobile",
+    "mcp",
+    "nix",
+    "direnv",
+    "sidebar"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Custom launch commands, direnv evaluation, and Nix flake detection are disabled in untrusted workspaces."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sidemu",
+          "title": "Sidemu",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sidemu": [
+        {
+          "type": "webview",
+          "id": "sidemu.screenView",
+          "name": "Screen"
+        }
+      ]
+    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "sidemu.mcp",
+        "label": "Sidemu"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sidemu.copyMcpConfig",
+        "title": "Sidemu: Copy MCP Server Config"
+      },
+      {
+        "command": "sidemu.refreshDevices",
+        "title": "Sidemu: Refresh Devices"
+      },
+      {
+        "command": "sidemu.bootDevice",
+        "title": "Sidemu: Boot Device…"
+      },
+      {
+        "command": "sidemu.shutdownDevice",
+        "title": "Sidemu: Shut Down Active Device"
+      },
+      {
+        "command": "sidemu.screenshot",
+        "title": "Sidemu: Save Screenshot"
+      },
+      {
+        "command": "sidemu.showLogs",
+        "title": "Sidemu: Show Logs"
+      }
+    ],
+    "configuration": {
+      "title": "Sidemu",
+      "properties": {
+        "sidemu.mobilecliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional override path to the mobilecli binary. Leave empty to use the bundled binary."
+        },
+        "sidemu.androidHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional Android SDK root directory override (e.g., ~/.local/share/Android). Auto-discovered from XDG/standard paths if empty."
+        },
+        "sidemu.avdHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional Android AVD directory override (e.g., ~/.config/.android/avd). Auto-discovered from XDG/standard paths if empty."
+        },
+        "sidemu.launchCommand": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Optional command to launch a workspace emulator (e.g., \"nix run .#emulator\"). Executed with SIDEMU_ACTIVE=1 in trusted workspaces."
+        },
+        "sidemu.mcpPort": {
+          "type": "number",
+          "default": 45821,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Localhost port for the embedded Streamable HTTP MCP server (falls back to an ephemeral port if occupied)."
+        },
+        "sidemu.autoFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically focus the Sidemu sidebar and attach the stream when a device transitions to online."
+        },
+        "sidemu.streamQuality": {
+          "type": "integer",
+          "default": 70,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "JPEG quality for the MJPEG screen stream (1-100)."
+        },
+        "sidemu.streamScale": {
+          "type": "number",
+          "default": 0.5,
+          "minimum": 0.1,
+          "maximum": 1,
+          "description": "Scale factor for the MJPEG screen stream (0.1-1)."
+        },
+        "sidemu.useDirenv": {
+          "type": "boolean",
+          "default": true,
+          "description": "Resolve direnv (or fall back to nix print-dev-env when flake.nix is present without .envrc) lazily in trusted workspaces."
+        },
+        "sidemu.shutdownOnExit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Best-effort shutdown of emulators/simulators booted by Sidemu when the extension deactivates."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "fetch:mobilecli": "node scripts/fetch-mobilecli.mjs",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p src/webview",
+    "bundle": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "build": "node scripts/fetch-mobilecli.mjs && node esbuild.config.mjs --production",
+    "vscode:prepublish": "npm run typecheck && node esbuild.config.mjs --production",
+    "package:host": "node scripts/package.mjs host",
+    "package:linux-x64": "node scripts/package.mjs linux-x64",
+    "package:linux-arm64": "node scripts/package.mjs linux-arm64",
+    "package:darwin-x64": "node scripts/package.mjs darwin-x64",
+    "package:darwin-arm64": "node scripts/package.mjs darwin-arm64",
+    "package:win32-x64": "node scripts/package.mjs win32-x64",
+    "package:win32-arm64": "node scripts/package.mjs win32-arm64",
+    "package:all": "node scripts/package.mjs all"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.101.0",
+    "@vscode/vsce": "^4.1.1",
+    "adm-zip": "^0.6.1",
+    "esbuild": "^0.28.2",
+    "ovsx": "^1.4.0",
+    "typescript": "~5.9.3"
+  }
+}
