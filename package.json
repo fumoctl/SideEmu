@@ -3,7 +3,7 @@
   "displayName": "Sidemu",
   "description": "Run and mirror Android emulators, iOS simulators, and mobile devices in the VSCodium / VS Code sidebar with a bundled MCP server and Nix flake support.",
   "version": "0.1.3",
-  "publisher": "sidemu",
+  "publisher": "fumoctl",
   "license": "MIT",
   "repository": {
     "type": "git",

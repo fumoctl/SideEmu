@@ -256,8 +256,6 @@ Sidemu never caches `PATH`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or `ANDROID_AVD_
 
 ## Development & Packaging
 
-> **Note:** Replace `"publisher": "sidemu"` in `package.json` with your Open VSX namespace before publishing.
-
 ```sh
 direnv allow
 npm install
