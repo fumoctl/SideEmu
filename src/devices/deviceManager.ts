@@ -1,5 +1,8 @@
 import { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as vscode from 'vscode';
 import { detectToolchain, resolveEnv } from '../env';
 import { log } from '../log';
@@ -39,8 +42,130 @@ export interface ScreenElement {
   value?: string;
   placeholder?: string;
   identifier?: string;
+  key?: string;
+  enabled?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+  focused?: boolean;
+  clickable?: boolean;
   rect: { x: number; y: number; width: number; height: number };
   children?: ScreenElement[];
+}
+
+export type DeviceOrientation = 'portrait' | 'landscape';
+
+export interface InstallAppResult {
+  message: string;
+  path: string;
+  app?: {
+    name?: string;
+    bundleId?: string;
+    version?: string;
+  };
+}
+
+export interface ScreenRecordStartResult {
+  status: string;
+  output: string;
+  recordingId: string;
+}
+
+export interface ScreenRecordStopItem {
+  recordingId?: string;
+  output?: string;
+  frameCount?: number;
+  duration?: string;
+  endReason?: string;
+  error?: string;
+}
+
+function flattenElements(elements: ScreenElement[]): ScreenElement[] {
+  const out: ScreenElement[] = [];
+  const walk = (list: ScreenElement[]) => {
+    for (const el of list) {
+      out.push(el);
+      if (el.children && el.children.length > 0) {
+        walk(el.children);
+      }
+    }
+  };
+  walk(elements);
+  return out;
+}
+
+export function formatElementsText(elements: ScreenElement[]): string {
+  const lines: string[] = [];
+  const walk = (list: ScreenElement[], depth: number) => {
+    const indent = '  '.repeat(depth);
+    for (const el of list) {
+      const parts = [`${el.ref ?? ''} [${el.type}]`.trim()];
+      const desc = [el.text, el.label, el.name, el.value, el.placeholder].find(
+        (v): v is string => typeof v === 'string' && v.length > 0,
+      );
+      if (desc !== undefined) {
+        parts.push(JSON.stringify(desc));
+      }
+      if (el.identifier) {
+        parts.push(`#${el.identifier}`);
+      }
+      const states: string[] = [];
+      if (el.enabled === false) {
+        states.push('disabled');
+      }
+      if (el.checked === true) {
+        states.push('checked');
+      }
+      if (el.selected === true) {
+        states.push('selected');
+      }
+      if (el.focused === true) {
+        states.push('focused');
+      }
+      if (states.length > 0) {
+        parts.push(`(${states.join(', ')})`);
+      }
+      lines.push(`${indent}${parts.join(' ')}`);
+      if (el.children && el.children.length > 0) {
+        walk(el.children, depth + 1);
+      }
+    }
+  };
+  walk(elements, 0);
+  return lines.join('\n');
+}
+
+function matchByRef(elements: ScreenElement[], refQuery: string): ScreenElement | undefined {
+  const q = refQuery.trim();
+  const normalized = q.startsWith('@') ? q : `@${q}`;
+  const bare = q.replace(/^@/, '');
+  return flattenElements(elements).find(
+    (el) => el.ref === q || el.ref === normalized || el.ref === bare,
+  );
+}
+
+function matchByText(elements: ScreenElement[], query: string): ScreenElement | undefined {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return undefined;
+  }
+  const all = flattenElements(elements);
+  const candidates = (el: ScreenElement) =>
+    [el.label, el.text, el.name, el.value, el.identifier, el.key, el.placeholder]
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      .map((v) => v.trim().toLowerCase());
+
+  return (
+    all.find((el) => candidates(el).some((v) => v === q)) ??
+    all.find((el) => candidates(el).some((v) => v.includes(q)))
+  );
+}
+
+function resolveHostPath(inputPath: string): string {
+  if (path.isAbsolute(inputPath)) {
+    return inputPath;
+  }
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return path.resolve(wsRoot ?? os.tmpdir(), inputPath);
 }
 
 export interface CrashSummary {
@@ -85,6 +210,7 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
   public busy: string | null = null;
 
   private readonly screenSizes = new Map<string, { width: number; height: number }>();
+  private readonly lastSnapshots = new Map<string, ScreenElement[]>();
   private lastFrame: { width: number; height: number } | null = null;
   private readonly bootedBySidemu = new Set<string>();
   private readonly launchedProcs = new Map<string, ChildProcess>();
@@ -205,6 +331,11 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
       for (const cachedId of this.screenSizes.keys()) {
         if (!currentOnlineIds.has(cachedId)) {
           this.screenSizes.delete(cachedId);
+        }
+      }
+      for (const cachedId of this.lastSnapshots.keys()) {
+        if (!currentOnlineIds.has(cachedId)) {
+          this.lastSnapshots.delete(cachedId);
         }
       }
 
@@ -356,6 +487,20 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
     }
   }
 
+  async doubleTap(
+    deviceId: string,
+    x: number,
+    y: number,
+    intervalMs = 60,
+    source: 'agent' | 'user' = 'agent',
+  ): Promise<void> {
+    await this.tap(deviceId, x, y, source);
+    if (intervalMs > 0) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    await this.tap(deviceId, x, y, source);
+  }
+
   async longpress(
     deviceId: string,
     x: number,
@@ -393,6 +538,38 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
       x2,
       y2,
       ...(duration !== undefined ? { duration } : {}),
+    });
+    try {
+      const [p1, p2] = await Promise.all([
+        this.toNormalized(deviceId, x1, y1),
+        this.toNormalized(deviceId, x2, y2),
+      ]);
+      this.emit('overlay', { kind: 'swipe', points: [p1, p2], source });
+    } catch {
+      // Ignore
+    }
+  }
+
+  async drag(
+    deviceId: string,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    opts: { holdMs?: number; durationMs?: number },
+    source: 'agent' | 'user' = 'agent',
+  ): Promise<void> {
+    const hold = opts.holdMs ?? 500;
+    const duration = opts.durationMs ?? 500;
+    await this.server.rpc('device.io.gesture', {
+      deviceId,
+      actions: [
+        { type: 'pointerMove', x: x1, y: y1, button: 0 },
+        { type: 'pointerDown', button: 0 },
+        ...(hold > 0 ? [{ type: 'pause', duration: hold, button: 0 }] : []),
+        { type: 'pointerMove', x: x2, y: y2, duration, button: 0 },
+        { type: 'pointerUp', button: 0 },
+      ],
     });
     try {
       const [p1, p2] = await Promise.all([
@@ -466,12 +643,8 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
   }
 
   async uiText(deviceId: string, full = false): Promise<string> {
-    const res = await this.server.rpc<{ text?: string }>('device.dump.ui', {
-      deviceId,
-      format: 'text',
-      full,
-    });
-    return res.text ?? '';
+    const elements = await this.uiElements(deviceId, full);
+    return formatElementsText(elements);
   }
 
   async uiElements(deviceId: string, full = false): Promise<ScreenElement[]> {
@@ -480,11 +653,140 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
       format: 'json',
       full,
     });
-    return res.elements ?? [];
+    const elements = res.elements ?? [];
+    this.lastSnapshots.set(deviceId, elements);
+    return elements;
+  }
+
+  async resolveElement(
+    deviceId: string,
+    query: { ref?: string; text?: string; full?: boolean },
+  ): Promise<ScreenElement> {
+    if (query.ref !== undefined) {
+      let elements = this.lastSnapshots.get(deviceId);
+      if (!elements) {
+        elements = await this.uiElements(deviceId, Boolean(query.full));
+      }
+      const found = matchByRef(elements, query.ref);
+      if (!found) {
+        throw new Error(
+          `No UI element found with ref "${query.ref}" in the latest snapshot. Call get_ui_elements to refresh refs.`,
+        );
+      }
+      return found;
+    }
+    if (query.text !== undefined) {
+      const elements = await this.uiElements(deviceId, Boolean(query.full));
+      const found = matchByText(elements, query.text);
+      if (!found) {
+        throw new Error(`No UI element found matching "${query.text}".`);
+      }
+      return found;
+    }
+    throw new Error('Either ref or text must be provided to resolve a UI element.');
   }
 
   async openUrl(deviceId: string, url: string): Promise<void> {
     await this.server.rpc('device.url', { deviceId, url });
+  }
+
+  async installApp(
+    deviceId: string,
+    opts: {
+      path: string;
+      forceResign?: boolean;
+      provisioningProfile?: string;
+      signingIdentity?: string;
+    },
+  ): Promise<InstallAppResult> {
+    const resolvedPath = resolveHostPath(opts.path.trim());
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`App bundle/package does not exist at "${resolvedPath}".`);
+    }
+    const res = await this.server.rpc<{
+      message?: string;
+      app?: { name?: string; bundleId?: string; version?: string };
+    }>('device.apps.install', {
+      deviceId,
+      path: resolvedPath,
+      ...(opts.forceResign ? { forceResign: true } : {}),
+      ...(opts.provisioningProfile ? { provisioningProfile: opts.provisioningProfile } : {}),
+      ...(opts.signingIdentity ? { signingIdentity: opts.signingIdentity } : {}),
+    });
+    return {
+      message: res?.message ?? `Installed "${resolvedPath}" on ${deviceId}.`,
+      path: resolvedPath,
+      ...(res?.app ? { app: res.app } : {}),
+    };
+  }
+
+  async uninstallApp(deviceId: string, bundleId: string): Promise<void> {
+    await this.server.rpc('device.apps.uninstall', { deviceId, bundleId });
+  }
+
+  async launchApp(
+    deviceId: string,
+    opts: { bundleId: string; activity?: string; locales?: string[] },
+  ): Promise<void> {
+    await this.server.rpc('device.apps.launch', {
+      deviceId,
+      bundleId: opts.bundleId,
+      ...(opts.activity ? { activity: opts.activity } : {}),
+      ...(opts.locales && opts.locales.length > 0 ? { locales: opts.locales } : {}),
+    });
+  }
+
+  async terminateApp(deviceId: string, bundleId: string): Promise<void> {
+    await this.server.rpc('device.apps.terminate', { deviceId, bundleId });
+  }
+
+  async clearAppData(deviceId: string, bundleId: string): Promise<void> {
+    await this.server.rpc('device.apps.clear', { deviceId, bundleId });
+  }
+
+  async getOrientation(deviceId: string): Promise<string> {
+    const res = await this.server.rpc<{ orientation?: string }>('device.io.orientation.get', {
+      deviceId,
+    });
+    return res.orientation ?? 'unknown';
+  }
+
+  async setOrientation(deviceId: string, orientation: DeviceOrientation): Promise<void> {
+    await this.server.rpc('device.io.orientation.set', { deviceId, orientation });
+    this.screenSizes.delete(deviceId);
+    this.lastSnapshots.delete(deviceId);
+  }
+
+  async startScreenRecording(
+    deviceId: string,
+    opts: { outputPath?: string; timeLimitSec?: number; recordingId?: string },
+  ): Promise<ScreenRecordStartResult> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const rawOut = opts.outputPath?.trim() || `sidemu-recording-${stamp}.mp4`;
+    const output = resolveHostPath(rawOut);
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    return await this.server.rpc<ScreenRecordStartResult>('device.screenrecord', {
+      deviceId,
+      output,
+      ...(opts.timeLimitSec !== undefined ? { timeLimit: opts.timeLimitSec } : {}),
+      ...(opts.recordingId ? { recordingId: opts.recordingId } : {}),
+    });
+  }
+
+  async stopScreenRecording(opts: {
+    deviceId?: string;
+    recordingId?: string;
+  }): Promise<ScreenRecordStopItem[]> {
+    const res = await this.server.rpc<
+      ScreenRecordStopItem & { recordings?: ScreenRecordStopItem[] }
+    >('device.screenrecord.stop', {
+      ...(opts.deviceId ? { deviceId: opts.deviceId } : {}),
+      ...(opts.recordingId ? { recordingId: opts.recordingId } : {}),
+    });
+    if (Array.isArray(res?.recordings) && res.recordings.length > 0) {
+      return res.recordings;
+    }
+    return res ? [res] : [];
   }
 
   async crashLogs(deviceId: string, limit = 3): Promise<CrashReportContent[]> {
@@ -789,6 +1091,7 @@ export class DeviceManager extends EventEmitter implements vscode.Disposable {
       }
       this.bootedBySidemu.delete(deviceId);
       this.screenSizes.delete(deviceId);
+      this.lastSnapshots.delete(deviceId);
       await this._refresh(false);
     } finally {
       this.busy = null;

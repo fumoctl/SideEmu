@@ -181,9 +181,13 @@ export class MobileCliServer implements vscode.Disposable {
 
     const effectiveTimeout =
       timeoutMs ??
-      (method === 'device.boot'
+      (method === 'device.boot' ||
+      method === 'device.apps.install' ||
+      method === 'device.apps.uninstall'
         ? 200_000
-        : method === 'device.dump.ui'
+        : method === 'device.dump.ui' ||
+            method === 'device.screenrecord' ||
+            method === 'device.screenrecord.stop'
           ? 70_000
           : method === 'device.shutdown'
             ? 60_000

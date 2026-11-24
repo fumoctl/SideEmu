@@ -48,15 +48,29 @@ Sidemu hosts a Streamable HTTP MCP server at `http://127.0.0.1:45821/mcp` (or th
 
 ### Exposed MCP Tools
 
+**Device & App Lifecycle**
 - `list_devices` — Lists online/offline Android emulators, iOS simulators (macOS), physical devices, and Nix launch targets
 - `boot_device` — Focuses the sidebar, boots an AVD, iOS simulator, or Nix launch target headlessly, and attaches the stream
 - `shutdown_device` — Shuts down a running emulator/simulator
+- `install_app` — Installs an Android `.apk` or iOS `.app` / `.ipa` (with optional iOS re-signing)
+- `uninstall_app` — Uninstalls an app by Android package name or iOS bundle ID
+- `launch_app` — Launches an installed app by package name / bundle ID (with optional Android `activity` or `locales`)
+- `terminate_app` — Force-stops / terminates a running app
+- `clear_app_data` — Clears persisted app data and cache for a package name / bundle ID
+
+**Inspection, Gestures, Screen Controls & Batching**
 - `get_screenshot` — Returns a downscaled JPEG screenshot image block plus coordinate dimensions
-- `get_ui_elements` — Returns a compact accessibility snapshot (`mobilecli snapshot`)
-- `tap` — Taps at `(x, y)` or by matching element `text` / `@ref`, drawing the live `AI` ripple overlay
-- `swipe` — Performs a swipe gesture by coordinates or direction, drawing the live `AI` trail overlay
+- `get_ui_elements` — Returns a compact accessibility snapshot with `@eN` refs cached for instant ref-based interactions
+- `tap` — Taps at `(x, y)`, `@ref`, or matching `text`, drawing a live `AI` ripple overlay
+- `double_tap` — Double-taps at `(x, y)`, `@ref`, or `text`, drawing live `AI` ripple overlays
+- `long_press` — Presses and holds at `(x, y)`, `@ref`, or `text`, drawing a live `AI` hold overlay
+- `swipe` — Swipes by coordinates or direction (optionally inside a container `@ref` or `text`), drawing a live `AI` trail overlay
+- `drag` — Holds and drags from `(x1, y1)` / `fromRef` / `fromText` to `(x2, y2)` / `toRef` / `toText`, drawing a live `AI` trail overlay
 - `type_text` — Types text into the focused field (with optional `submit`)
 - `press_key` — Presses `HOME`, `POWER`, `VOLUME_UP`, `VOLUME_DOWN`, `ENTER`, `BACKSPACE`, or Android-only `BACK` / `APP_SWITCH`
+- `get_orientation` / `set_orientation` — Reads or switches screen orientation (`portrait` / `landscape`)
+- `start_screen_recording` / `stop_screen_recording` — Starts and finalizes MP4 screen recordings on the host
+- `batch_actions` — Executes a multi-step sequence of gestures, `@ref` clicks, typing, app controls, waits, snapshots, and screenshots in one tool call
 - `open_url` — Opens a URL or deep link on the active device
 - `get_crash_logs` — Fetches recent crash reports for the active device
 - `get_nix_flake_guide` — Returns documentation & templates for structuring a Nix `flake.nix` for Sidemu (also exposed as MCP resource `sidemu://docs/nix-flake` and prompt `setup_nix_flake`)
